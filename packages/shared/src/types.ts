@@ -51,7 +51,7 @@ export type UserAttributeDTO = {
   id: string;
   name: string;
   value: string;
-  kind: "Cookie" | "Header";
+  kind: "Cookie" | "Header" | "Regex";
 };
 
 export type UserDTO = {

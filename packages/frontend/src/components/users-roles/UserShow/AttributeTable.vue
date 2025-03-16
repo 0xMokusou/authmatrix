@@ -80,7 +80,7 @@ const onAttributeUpdate = (
         >
         <Column field="kind" header="Kind">
           <template #editor="{data}">
-            <Select :options="['Cookie', 'Header']" v-model="data.kind" />
+            <Select :options="['Cookie', 'Header', 'Regex']" v-model="data.kind" />
           </template>
         </Column>
 

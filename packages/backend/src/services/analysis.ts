@@ -1,6 +1,6 @@
 import type { SDK } from "caido:plugin";
 import type { RequestSpec } from "caido:utils";
-
+import { RequestSpecRaw } from "caido:utils";
 import { TemplateStore } from "../stores/templates";
 import { UserStore } from "../stores/users";
 
@@ -131,29 +131,42 @@ export const runAnalysis = async (sdk: SDK<never, BackendEvents>) => {
 };
 
 const sendRequest = async (sdk: SDK, template: TemplateDTO, user: UserDTO) => {
-  const { request: baseRequest } =
+  try {
+    const { request: baseRequest } =
     (await sdk.requests.get(template.requestId)) ?? {};
 
-  if (!baseRequest) {
-    sdk.console.error(`Request not found for template ${template.id}`);
-    return;
+    if (!baseRequest) {
+      sdk.console.error(`Request not found for template ${template.id}`);
+      return;
+    }
+
+    const spec = baseRequest.toSpec();
+    setCookies(spec, user.attributes);
+    setHeaders(spec, user.attributes);
+    const newSpec = setRegexes(spec, user.attributes, sdk);
+
+    const { request } = await sdk.requests.send(newSpec);
+
+    const requestId = request.getId();
+    const analysisRequest: AnalysisRequestDTO = {
+      id: `${template.id}-${user.id}-${requestId}`,
+      templateId: template.id,
+      userId: user.id,
+      requestId,
+    };
+
+    return analysisRequest;
+  } catch (e: unknown) {
+    // Log error details separately
+    if (e instanceof Error) {
+      sdk.console.error("Error message: " + e.message);
+      sdk.console.error("Error name: " + e.name);
+      sdk.console.error("Stack trace: " + e.stack);
+    } else {
+      sdk.console.error("Unknown error: " + String(e));
+    }
   }
 
-  const spec = baseRequest.toSpec();
-  setCookies(spec, user.attributes);
-  setHeaders(spec, user.attributes);
-
-  const { request } = await sdk.requests.send(spec);
-
-  const requestId = request.getId();
-  const analysisRequest: AnalysisRequestDTO = {
-    id: `${template.id}-${user.id}-${requestId}`,
-    templateId: template.id,
-    userId: user.id,
-    requestId,
-  };
-
-  return analysisRequest;
 };
 
 const setCookies = (spec: RequestSpec, attributes: UserAttributeDTO[]) => {
@@ -194,6 +207,47 @@ const setHeaders = (spec: RequestSpec, attributes: UserAttributeDTO[]) => {
   }
 
   return spec;
+};
+
+const setRegexes = (spec: RequestSpec, attributes: UserAttributeDTO[], sdk: SDK): RequestSpec | RequestSpecRaw => {
+    // Type guard to check if error has stack property
+  try {
+    const regexes = attributes.filter((attr) => attr.kind === "Regex");
+    if (regexes.length === 0) return spec;
+
+    const rawBytes = spec.getBody()?.toRaw();
+    if (!rawBytes) return spec;
+    let requestStr = '';
+    for (let i = 0; i < rawBytes.length; i++) {
+      requestStr += String.fromCharCode(rawBytes[i]!);
+    }
+    for (const regex of regexes) {
+      try {
+        sdk.console.log(`Testing regex pattern: ${regex.name}`);
+        sdk.console.log(`regex: ${regex.name}`)
+        const regexPattern = new RegExp(regex.name, 'g');
+        requestStr = requestStr.replace(regexPattern, regex.value);
+      } catch (e) {
+        sdk.console.error(`Invalid regex pattern: ${regex.name}`);
+      }
+    }
+    const result = new Uint8Array(requestStr.length);
+    for (let i = 0; i < requestStr.length; i++) {
+      result[i] = requestStr.charCodeAt(i);
+    }
+    spec.setBody(result, { updateContentLength: true });
+    return spec
+  } catch (e: unknown) {
+    // Log error details separately
+    if (e instanceof Error) {
+      sdk.console.error("Error message: " + e.message);
+      sdk.console.error("Error name: " + e.name);
+      sdk.console.error("Stack trace: " + e.stack);
+    } else {
+      sdk.console.error("Unknown error: " + String(e));
+    }
+    return spec
+  }
 };
 
 const generateRoleRuleStatus = async (
